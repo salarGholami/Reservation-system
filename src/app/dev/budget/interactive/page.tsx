@@ -6,6 +6,50 @@ import { Money, Transaction, Category, BudgetRule } from "@/modules/budget";
 import { analyzeMoneyFlow } from "@/modules/budget/application/analyze-money-flow.usecase";
 import { evaluateRules } from "@/modules/budget/application/evaluate-rules.usecase";
 
+// ---------- Hook برای مدیریت persistence ----------
+function useBudgetStorage() {
+  const STORAGE_KEY = "budget_transactions_v2";
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+
+  // بارگذاری از localStorage و بازسازی کلاس‌ها
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        setTransactions(
+          parsed.map((tx: any) =>
+            Transaction.create({
+              ...tx,
+              amount: Money.create(Number(tx.amount)), // بازسازی Money
+              occurredAt: new Date(tx.occurredAt),
+              createdAt: new Date(tx.createdAt),
+            }),
+          ),
+        );
+      } catch {
+        console.warn("Failed to parse stored transactions");
+      }
+    }
+  }, []);
+
+  // ذخیره به localStorage (فقط داده‌های خام)
+  useEffect(() => {
+    const raw = transactions.map((tx) => ({
+      id: tx.id,
+      amount: tx.amount.value, // فقط عدد
+      type: tx.type,
+      categoryId: tx.categoryId,
+      description: tx.description,
+      occurredAt: tx.occurredAt.toISOString(),
+      createdAt: tx.createdAt.toISOString(),
+    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(raw));
+  }, [transactions]);
+
+  return { transactions, setTransactions };
+}
+
 export default function BudgetInteractivePage() {
   // ---------- دسته‌ها ----------
   const categories: Category[] = [
@@ -53,7 +97,7 @@ export default function BudgetInteractivePage() {
   ];
 
   // ---------- State ----------
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const { transactions, setTransactions } = useBudgetStorage();
   const [form, setForm] = useState({
     amount: "",
     type: "income",
@@ -62,22 +106,20 @@ export default function BudgetInteractivePage() {
   });
   const [mounted, setMounted] = useState(false);
 
-  // ---------- فقط روی کلاینت اجرا شود ----------
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  // Hydration-safe
+  useEffect(() => setMounted(true), []);
 
-  // ---------- تابع فرمت اعداد فارسی ----------
+  // ---------- Helper برای فرمت عدد فارسی ----------
   const formatMoney = (value: number) => {
     if (!mounted) return value.toString();
     return new Intl.NumberFormat("fa-IR").format(value);
   };
 
-  // ---------- افزودن تراکنش جدید ----------
+  // ---------- افزودن تراکنش ----------
   const handleAddTransaction = () => {
     if (!form.amount || Number(form.amount) <= 0) return;
     const tx = Transaction.create({
-      id: `t${Date.now()}`, // فقط روی Client تولید شود
+      id: `t${Date.now()}`, // فقط روی Client
       amount: Money.create(Number(form.amount)),
       type: form.type as "income" | "expense",
       categoryId: form.categoryId,
@@ -89,18 +131,17 @@ export default function BudgetInteractivePage() {
     setForm({ ...form, amount: "", description: "" });
   };
 
-  // ---------- محاسبه خلاصه و هشدارها ----------
+  // ---------- تحلیل جریان پول و هشدارها ----------
   const summary = analyzeMoneyFlow({ transactions, categories });
   const alerts = evaluateRules({ transactions, categories, rules });
 
-  // ---------- اگر هنوز Client mount نشده، هیچ چیزی نشان نده ----------
-  if (!mounted) return null;
+  if (!mounted) return null; // SSR-safe
 
   return (
     <main className="p-8 space-y-6 max-w-2xl mx-auto">
       <h1 className="text-3xl font-bold mb-4">تعامل زنده با بودجه</h1>
 
-      {/* ---------- فرم ---------- */}
+      {/* ---------- فرم اضافه کردن تراکنش ---------- */}
       <div className="p-4 border rounded-md space-y-2">
         <div className="flex flex-col md:flex-row gap-2">
           <input
