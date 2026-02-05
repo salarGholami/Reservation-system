@@ -1,10 +1,11 @@
-// src/app/dev/budget/page.tsx
+// src/app/dev/budget/rules/page.tsx
 
 import React from "react";
-import { Money, Transaction, Category } from "@/modules/budget";
+import { Money, Transaction, Category, BudgetRule } from "@/modules/budget";
 import { analyzeMoneyFlow } from "@/modules/budget/application/analyze-money-flow.usecase";
+import { evaluateRules } from "@/modules/budget/application/evaluate-rules.usecase";
 
-export default function BudgetDevPage() {
+export default function BudgetRulesDevPage() {
   // ---------- دسته‌ها ----------
   const salaryCategory = Category.create({
     id: "c1",
@@ -61,16 +62,43 @@ export default function BudgetDevPage() {
     }),
   ];
 
+  // ---------- قوانین ----------
+  const rules: BudgetRule[] = [
+    BudgetRule.create({
+      id: "r1",
+      categoryId: foodCategory.id,
+      thresholdType: "percentage",
+      thresholdValue: 30, // درصد
+      comparison: "gt",
+      message: "هزینه غذا بیش از ۳۰٪ کل هزینه‌ها است!",
+    }),
+    BudgetRule.create({
+      id: "r2",
+      categoryId: entertainmentCategory.id,
+      thresholdType: "percentage",
+      thresholdValue: 20,
+      comparison: "gt",
+      message: "هزینه تفریح بیش از ۲۰٪ کل هزینه‌ها است!",
+    }),
+  ];
+
   // ---------- تحلیل جریان پول ----------
   const summary = analyzeMoneyFlow({
     transactions,
     categories: [salaryCategory, foodCategory, entertainmentCategory],
   });
 
-  // ---------- رندر UI ----------
+  // ---------- اجرای Rule Engine ----------
+  const alerts = evaluateRules({
+    transactions,
+    categories: [salaryCategory, foodCategory, entertainmentCategory],
+    rules,
+  });
+
+  // ---------- رندر ----------
   return (
     <main className="p-10 space-y-6">
-      <h1 className="text-3xl font-bold mb-4">نمایش تستی جریان بودجه</h1>
+      <h1 className="text-3xl font-bold mb-4">صفحه تست قوانین بودجه</h1>
 
       <div className="space-y-1">
         <div>کل درآمد: {summary.totalIncome.value.toLocaleString()} تومان</div>
@@ -78,17 +106,17 @@ export default function BudgetDevPage() {
         <div>بالانس: {summary.balance.value.toLocaleString()} تومان</div>
       </div>
 
-      <h2 className="text-2xl font-semibold mt-6">جزئیات هزینه‌ها</h2>
+      <h2 className="text-2xl font-semibold mt-6">هشدارها / Alerts</h2>
       <div className="space-y-2">
-        {summary.categoryBreakdown.map((item) => (
-          <div key={item.categoryId} className="flex justify-between">
-            <span>
-              دسته: {item.categoryId} — {item.total.value.toLocaleString()}{" "}
-              تومان
-            </span>
-            <span>{item.percentage}% از کل هزینه</span>
-          </div>
-        ))}
+        {alerts.length === 0 ? (
+          <div>هیچ هشداری وجود ندارد</div>
+        ) : (
+          alerts.map((msg, idx) => (
+            <div key={idx} className="text-red-600 font-semibold">
+              ⚠ {msg}
+            </div>
+          ))
+        )}
       </div>
     </main>
   );
