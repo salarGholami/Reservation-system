@@ -4,14 +4,49 @@
 import React, { useState, useEffect } from "react";
 import { Money, Transaction, Category, BudgetRule } from "@/modules/budget";
 import { analyzeMoneyFlow } from "@/modules/budget/application/analyze-money-flow.usecase";
-import { evaluateRules } from "@/modules/budget/application/evaluate-rules.usecase";
 
-// ---------- Hook برای مدیریت persistence ----------
+// ---------- Rule Engine ----------
+function analyzeRules(
+  transactions: Transaction[],
+  categories: Category[],
+  rules: BudgetRule[],
+) {
+  const alerts: string[] = [];
+  const summary = analyzeMoneyFlow({ transactions, categories });
+
+  for (const rule of rules) {
+    const category = categories.find((c) => c.id === rule.categoryId);
+    if (!category) continue;
+
+    const catTotal = transactions
+      .filter((tx) => tx.categoryId === category.id)
+      .reduce((sum, tx) => sum + tx.amount.value, 0);
+
+    if (rule.thresholdType === "percentage") {
+      const base =
+        category.type === "expense"
+          ? summary.totalExpense.value
+          : summary.totalIncome.value;
+      if (base === 0) continue;
+      const percent = (catTotal / base) * 100;
+
+      if (rule.comparison === "gt" && percent > rule.thresholdValue) {
+        alerts.push(rule.message);
+      }
+      if (rule.comparison === "lt" && percent < rule.thresholdValue) {
+        alerts.push(rule.message);
+      }
+    }
+  }
+
+  return alerts;
+}
+
+// ---------- Persistence Hook ----------
 function useBudgetStorage() {
-  const STORAGE_KEY = "budget_transactions_v2";
+  const STORAGE_KEY = "budget_transactions_v3";
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
-  // بارگذاری از localStorage و بازسازی کلاس‌ها
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
@@ -21,7 +56,7 @@ function useBudgetStorage() {
           parsed.map((tx: any) =>
             Transaction.create({
               ...tx,
-              amount: Money.create(Number(tx.amount)), // بازسازی Money
+              amount: Money.create(Number(tx.amount)),
               occurredAt: new Date(tx.occurredAt),
               createdAt: new Date(tx.createdAt),
             }),
@@ -33,11 +68,10 @@ function useBudgetStorage() {
     }
   }, []);
 
-  // ذخیره به localStorage (فقط داده‌های خام)
   useEffect(() => {
     const raw = transactions.map((tx) => ({
       id: tx.id,
-      amount: tx.amount.value, // فقط عدد
+      amount: tx.amount.value,
       type: tx.type,
       categoryId: tx.categoryId,
       description: tx.description,
@@ -50,8 +84,8 @@ function useBudgetStorage() {
   return { transactions, setTransactions };
 }
 
+// ---------- Page ----------
 export default function BudgetInteractivePage() {
-  // ---------- دسته‌ها ----------
   const categories: Category[] = [
     Category.create({
       id: "c1",
@@ -76,7 +110,6 @@ export default function BudgetInteractivePage() {
     }),
   ];
 
-  // ---------- قوانین ----------
   const rules: BudgetRule[] = [
     BudgetRule.create({
       id: "r1",
@@ -96,7 +129,6 @@ export default function BudgetInteractivePage() {
     }),
   ];
 
-  // ---------- State ----------
   const { transactions, setTransactions } = useBudgetStorage();
   const [form, setForm] = useState({
     amount: "",
@@ -106,20 +138,17 @@ export default function BudgetInteractivePage() {
   });
   const [mounted, setMounted] = useState(false);
 
-  // Hydration-safe
   useEffect(() => setMounted(true), []);
 
-  // ---------- Helper برای فرمت عدد فارسی ----------
   const formatMoney = (value: number) => {
     if (!mounted) return value.toString();
     return new Intl.NumberFormat("fa-IR").format(value);
   };
 
-  // ---------- افزودن تراکنش ----------
   const handleAddTransaction = () => {
     if (!form.amount || Number(form.amount) <= 0) return;
     const tx = Transaction.create({
-      id: `t${Date.now()}`, // فقط روی Client
+      id: `t${Date.now()}`,
       amount: Money.create(Number(form.amount)),
       type: form.type as "income" | "expense",
       categoryId: form.categoryId,
@@ -131,17 +160,16 @@ export default function BudgetInteractivePage() {
     setForm({ ...form, amount: "", description: "" });
   };
 
-  // ---------- تحلیل جریان پول و هشدارها ----------
   const summary = analyzeMoneyFlow({ transactions, categories });
-  const alerts = evaluateRules({ transactions, categories, rules });
+  const alerts = analyzeRules(transactions, categories, rules);
 
-  if (!mounted) return null; // SSR-safe
+  if (!mounted) return null;
 
   return (
     <main className="p-8 space-y-6 max-w-2xl mx-auto">
       <h1 className="text-3xl font-bold mb-4">تعامل زنده با بودجه</h1>
 
-      {/* ---------- فرم اضافه کردن تراکنش ---------- */}
+      {/* فرم */}
       <div className="p-4 border rounded-md space-y-2">
         <div className="flex flex-col md:flex-row gap-2">
           <input
@@ -186,7 +214,7 @@ export default function BudgetInteractivePage() {
         </button>
       </div>
 
-      {/* ---------- لیست تراکنش‌ها ---------- */}
+      {/* تراکنش‌ها */}
       <div className="space-y-1">
         <h2 className="text-xl font-semibold">تراکنش‌ها</h2>
         {transactions.length === 0 ? (
@@ -204,7 +232,7 @@ export default function BudgetInteractivePage() {
         )}
       </div>
 
-      {/* ---------- خلاصه ---------- */}
+      {/* خلاصه */}
       <div className="space-y-1 mt-4">
         <h2 className="text-xl font-semibold">خلاصه</h2>
         <div>کل درآمد: {formatMoney(summary.totalIncome.value)} تومان</div>
@@ -212,9 +240,9 @@ export default function BudgetInteractivePage() {
         <div>بالانس: {formatMoney(summary.balance.value)} تومان</div>
       </div>
 
-      {/* ---------- هشدارها ---------- */}
+      {/* هشدارها */}
       <div className="space-y-1 mt-4">
-        <h2 className="text-xl font-semibold">هشدارها</h2>
+        <h2 className="text-xl font-semibold">هشدارها و پیشنهادات</h2>
         {alerts.length === 0 ? (
           <div>هیچ هشداری وجود ندارد</div>
         ) : (
